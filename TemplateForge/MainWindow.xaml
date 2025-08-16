@@ -5,6 +5,9 @@
         Height="700" Width="1400"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
+        <!-- BoolToVisibility Converter -->
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+        
         <!-- 탭 스타일 -->
         <Style TargetType="TabItem">
             <Setter Property="Template">
@@ -121,8 +124,18 @@
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="{Binding Icon}" Margin="0,0,4,0"/>
                                     <TextBlock Text="{Binding Name}"/>
-                                    <TextBlock Text=" *" Foreground="Red" 
-                                              Visibility="{Binding IsModified, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                                    <TextBlock Text=" *" Foreground="Red">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsModified}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
                                 </StackPanel>
                             </HierarchicalDataTemplate>
                         </TreeView.ItemTemplate>
