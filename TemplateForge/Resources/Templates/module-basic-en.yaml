@@ -1,0 +1,36 @@
+# === Module Specification Template (Basic) ===
+module: MODULE_NAME
+goal: "Single sentence describing module purpose"
+
+context:
+  summary: "One-line domain/use-case summary"
+  assumptions:
+    - "Core assumption about environment"
+    - "Must-meet prerequisite"
+
+invariants:
+  - "Rule that must always hold"
+  - "Another invariant to maintain"
+
+api:
+  interfaces:
+    - name: IModuleService
+      methods:
+        - name: processData
+          in: { input: string, options: object }
+          out: { success: bool, data?: object }
+          effects: [ Emitted(DataProcessed) ]
+
+events:
+  - name: DataProcessed
+    data: { id: string, result: object, timestamp: long }
+
+constraints:
+  perf: { mainThreadBudgetMs: 0.2 }
+  memory: { allocBytesPerCall: 0 }
+  threading: "Main thread only"
+
+tests:
+  - "Normal processing path test"
+  - "Error condition handling test"
+  - "Performance threshold validation"

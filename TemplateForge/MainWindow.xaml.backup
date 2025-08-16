@@ -1,0 +1,196 @@
+<Window x:Class="TemplateForge.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TemplateForge - YAML Template Generator" 
+        Height="700" Width="1200"
+        WindowStartupLocation="CenterScreen">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <!-- 상단: 타이틀바 -->
+        <Border Grid.Row="0" Background="#0078D4" Padding="12,8">
+            <TextBlock Text="TemplateForge - YAML Template Generator" 
+                      Foreground="White" FontWeight="SemiBold" FontSize="14"/>
+        </Border>
+
+        <!-- 메인 콘텐츠 -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="300"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="400"/>
+            </Grid.ColumnDefinitions>
+            
+            <!-- 왼쪽: 템플릿 선택 -->
+            <Border Grid.Column="0" Background="#F8F9FA" BorderBrush="#DEE2E6" BorderThickness="0,0,1,0">
+                <DockPanel>
+                    <!-- 템플릿 헤더 + 도구 -->
+                    <Border DockPanel.Dock="Top" Background="#E9ECEF" BorderBrush="#DEE2E6" BorderThickness="0,0,0,1">
+                        <DockPanel Margin="12,8">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <Button x:Name="ImportTemplateButton" 
+                                       Content="📥" Padding="6,4" Margin="2,0"
+                                       Background="#4CAF50" Foreground="White" FontSize="12"
+                                       ToolTip="Import Template from File"
+                                       Click="ImportTemplate_Click"/>
+                                <Button x:Name="RefreshTemplateButton" 
+                                       Content="🔄" Padding="6,4" Margin="2,0,0,0"
+                                       Background="#2196F3" Foreground="White" FontSize="12"
+                                       ToolTip="Refresh Template List"
+                                       Click="RefreshTemplate_Click"/>
+                            </StackPanel>
+                            <TextBlock Text="📋 Templates" FontWeight="Bold" FontSize="13" 
+                                      Foreground="#495057" VerticalAlignment="Center"/>
+                        </DockPanel>
+                    </Border>
+                    
+                    <!-- 템플릿 목록 -->
+                    <ListBox x:Name="TemplateListBox" Margin="8" 
+                            SelectionChanged="TemplateListBox_SelectionChanged"
+                            BorderThickness="0" Background="Transparent">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Padding" Value="8,6"/>
+                                <Setter Property="Margin" Value="0,1"/>
+                                <Setter Property="Background" Value="White"/>
+                                <Setter Property="BorderThickness" Value="1"/>
+                                <Setter Property="BorderBrush" Value="#E0E0E0"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border Background="{TemplateBinding Background}" 
+                                                   BorderBrush="{TemplateBinding BorderBrush}"
+                                                   BorderThickness="{TemplateBinding BorderThickness}"
+                                                   CornerRadius="4" Margin="{TemplateBinding Margin}">
+                                                <ContentPresenter Margin="{TemplateBinding Padding}"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter Property="Background" Value="#F0F8FF"/>
+                                                    <Setter Property="BorderBrush" Value="#2196F3"/>
+                                                </Trigger>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter Property="Background" Value="#E3F2FD"/>
+                                                    <Setter Property="BorderBrush" Value="#2196F3"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Name}" FontWeight="Medium" FontSize="11"/>
+                                    <TextBlock Text="{Binding Category}" FontSize="9" Foreground="#6C757D" Margin="0,1,0,0"/>
+                                    <TextBlock Text="{Binding Language}" FontSize="9" Foreground="#28A745" Margin="0,1,0,0"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <!-- 하단: 프로젝트 설정 -->
+                    <Border DockPanel.Dock="Bottom" Background="#F8F9FA" BorderBrush="#DEE2E6" BorderThickness="0,1,0,0">
+                        <StackPanel Margin="12">
+                            <TextBlock Text="모듈명" FontWeight="Medium" Margin="0,0,0,4" FontSize="11"/>
+                            <TextBox x:Name="ModuleNameTextBox" Text="PlayerInventory" Padding="6" FontSize="11"/>
+                            
+                            <TextBlock Text="출력 경로" FontWeight="Medium" Margin="0,8,0,4" FontSize="11"/>
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="..." Width="24" Height="24" Margin="4,0,0,0" 
+                                       Click="BrowseOutputPath_Click" FontSize="10"/>
+                                <TextBox x:Name="OutputPathTextBox" Text="C:\temp\output" Padding="6" FontSize="11"/>
+                            </DockPanel>
+                        </StackPanel>
+                    </Border>
+                </DockPanel>
+            </Border>
+
+            <!-- 중앙: YAML 편집기 -->
+            <DockPanel Grid.Column="1">
+                <Border DockPanel.Dock="Top" Background="#F8F9FA" BorderBrush="#DEE2E6" BorderThickness="0,0,0,1" Padding="12,8">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Ellipse x:Name="StatusIndicator" Width="8" Height="8" Fill="LightGray" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="StatusText" Text="Starting..." VerticalAlignment="Center" Margin="6,0,0,0" FontSize="11"/>
+                        </StackPanel>
+                        <TextBlock Text="YAML Editor" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center"/>
+                    </DockPanel>
+                </Border>
+                
+                <TextBox x:Name="YamlEditor" 
+                        FontFamily="Consolas" 
+                        FontSize="12"
+                        AcceptsReturn="True" 
+                        AcceptsTab="True"
+                        VerticalScrollBarVisibility="Auto"
+                        HorizontalScrollBarVisibility="Auto"
+                        TextWrapping="NoWrap"
+                        Background="White"
+                        Padding="12"
+                        BorderThickness="0"
+                        TextChanged="YamlEditor_TextChanged"/>
+            </DockPanel>
+
+            <!-- 오른쪽: 액션 버튼들 + 결과 -->
+            <Border Grid.Column="2" Background="#F8F9FA" BorderBrush="#DEE2E6" BorderThickness="1,0,0,0">
+                <DockPanel>
+                    <!-- 액션 버튼들 -->
+                    <Border DockPanel.Dock="Top" Background="#E9ECEF" BorderBrush="#DEE2E6" BorderThickness="0,0,0,1" Padding="12,8">
+                        <StackPanel>
+                            <Button x:Name="GenerateButton" Content="🚀 Generate" Click="Generate_Click" 
+                                   Background="#2196F3" Foreground="White" Padding="12,8" FontWeight="Medium"
+                                   Margin="0,0,0,6"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="ValidateButton" Content="✅ Validate" Click="Validate_Click" 
+                                       Padding="8,6" Margin="0,0,4,0" FontSize="11"/>
+                                <Button x:Name="DiagramButton" Content="📊 Diagram" Click="Diagram_Click" 
+                                       Padding="8,6" FontSize="11"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    
+                    <!-- 결과 탭 -->
+                    <TabControl x:Name="ResultTabControl" BorderThickness="0">
+                        <TabItem Header="📊 Dependency Diagram">
+                            <WebBrowser x:Name="DiagramWebBrowser" 
+                                       LoadCompleted="DiagramWebBrowser_LoadCompleted"/>
+                        </TabItem>
+                        <TabItem Header="✅ Validation Results">
+                            <ScrollViewer>
+                                <TextBlock x:Name="ValidationResults" FontFamily="Consolas" FontSize="10" 
+                                          Padding="12" TextWrapping="Wrap" Background="White"/>
+                            </ScrollViewer>
+                        </TabItem>
+                        <TabItem Header="📁 Generated Files">
+                            <ScrollViewer>
+                                <TextBlock x:Name="GeneratedFiles" FontFamily="Consolas" FontSize="10" 
+                                          Padding="12" TextWrapping="Wrap" Background="White"/>
+                            </ScrollViewer>
+                        </TabItem>
+                    </TabControl>
+                </DockPanel>
+            </Border>
+        </Grid>
+
+        <!-- 하단: 상태바 -->
+        <Border Grid.Row="2" Background="#F8F9FA" BorderBrush="#DEE2E6" BorderThickness="0,1,0,0" Padding="12,6">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                    <Ellipse Width="8" Height="8" Fill="#28A745" VerticalAlignment="Center"/>
+                    <TextBlock Text="FastMCP Server: Running" Margin="6,0,0,0" FontSize="11"/>
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <TextBlock Text="Templates: 4 loaded" FontSize="11"/>
+                    <TextBlock Text="Files: 0 generated" Margin="16,0,0,0" FontSize="11"/>
+                </StackPanel>
+                <Border/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

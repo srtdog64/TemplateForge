@@ -1,0 +1,36 @@
+# === 모듈 명세 템플릿 (기본) ===
+module: MODULE_NAME
+goal: "모듈의 목적을 한 문장으로 설명"
+
+context:
+  summary: "도메인/사용 사례 한 줄 요약"
+  assumptions:
+    - "환경에 대한 핵심 가정"
+    - "반드시 충족되어야 할 전제조건"
+
+invariants:
+  - "항상 참이어야 하는 규칙"
+  - "유지해야 할 또 다른 불변식"
+
+api:
+  interfaces:
+    - name: IModuleService
+      methods:
+        - name: processData
+          in: { input: string, options: object }
+          out: { success: bool, data?: object }
+          effects: [ Emitted(DataProcessed) ]
+
+events:
+  - name: DataProcessed
+    data: { id: string, result: object, timestamp: long }
+
+constraints:
+  perf: { mainThreadBudgetMs: 0.2 }
+  memory: { allocBytesPerCall: 0 }
+  threading: "메인스레드 전용"
+
+tests:
+  - "정상 처리 경로 테스트"
+  - "에러 조건 처리 테스트"
+  - "성능 임계값 검증"

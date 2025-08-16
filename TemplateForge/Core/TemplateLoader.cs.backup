@@ -1,0 +1,273 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+
+namespace TemplateForge.Core
+{
+    public sealed class TemplateLoader
+    {
+        private readonly List<TemplateInfo> builtInTemplates;
+        private readonly List<TemplateInfo> importedTemplates;
+
+        public TemplateLoader()
+        {
+            this.builtInTemplates = new List<TemplateInfo>();
+            this.importedTemplates = new List<TemplateInfo>();
+            this.loadBuiltInTemplates();
+        }
+
+        // ✅ MainWindow 쪽에서 호출하는 이름으로 맞춤
+        public IReadOnlyList<TemplateInfo> getAvailableTemplates()
+        {
+            return this.getAllTemplates();
+        }
+
+        public IReadOnlyList<TemplateInfo> getAllTemplates()
+        {
+            var allTemplates = new List<TemplateInfo>();
+            allTemplates.AddRange(this.builtInTemplates);
+            allTemplates.AddRange(this.importedTemplates);
+
+            return new ReadOnlyCollection<TemplateInfo>(
+                allTemplates
+                    .OrderBy(t => t.getCategory(), StringComparer.Ordinal)
+                    .ThenBy(t => t.getName(), StringComparer.Ordinal)
+                    .ToList()
+            );
+        }
+
+        // ✅ 오버로드 추가: string 파일명으로도 로드 가능
+        public string loadTemplate(string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                throw new ArgumentException("fileName is null or empty.");
+            }
+            var info = this.builtInTemplates.FirstOrDefault(t => string.Equals(t.FileName, fileName, StringComparison.OrdinalIgnoreCase))
+                       ?? this.importedTemplates.FirstOrDefault(t => string.Equals(t.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+
+            if (info == null)
+            {
+                throw new FileNotFoundException($"Template not found: {fileName}");
+            }
+            return this.loadTemplate(info);
+        }
+
+        public string loadTemplate(TemplateInfo templateInfo)
+        {
+            if (templateInfo == null)
+            {
+                throw new ArgumentNullException(nameof(templateInfo));
+            }
+
+            if (templateInfo.IsBuiltIn)
+            {
+                return this.loadBuiltInTemplate(templateInfo.FileName);
+            }
+            else
+            {
+                return File.ReadAllText(templateInfo.FilePath, System.Text.Encoding.UTF8);
+            }
+        }
+
+        public void importTemplate(string filePath)
+        {
+            if (!File.Exists(filePath))
+            {
+                throw new FileNotFoundException($"템플릿 파일을 찾을 수 없습니다: {filePath}");
+            }
+
+            var fileNameNoExt = Path.GetFileNameWithoutExtension(filePath);
+            var templateInfo = this.createImportedTemplateInfo(fileNameNoExt, filePath);
+
+            var existing = this.importedTemplates.FirstOrDefault(t =>
+                t.FileName.Equals(templateInfo.FileName, StringComparison.OrdinalIgnoreCase));
+
+            if (existing != null)
+            {
+                this.importedTemplates.Remove(existing);
+            }
+
+            this.importedTemplates.Add(templateInfo);
+        }
+
+        public void removeImportedTemplate(TemplateInfo templateInfo)
+        {
+            if (templateInfo == null) { return; }
+            this.importedTemplates.Remove(templateInfo);
+        }
+
+        private void loadBuiltInTemplates()
+        {
+            this.builtInTemplates.Add(new TemplateInfo("모듈 명세 (기본)", "📋 Module", "한국어", "module-basic-ko.yaml", null, true, true, "단일 모듈의 API, 이벤트, 제약사항 정의"));
+            this.builtInTemplates.Add(new TemplateInfo("Module Spec (Basic)", "📋 Module", "English", "module-basic-en.yaml", null, false, true, "Define API, events, and constraints for a single module"));
+            this.builtInTemplates.Add(new TemplateInfo("앱 구성 (기본)", "🏢 App Composition", "한국어", "app-composition-ko.yaml", null, true, true, "전역 DI, 수명주기, 이벤트 라우팅 설정"));
+        }
+
+        private string loadBuiltInTemplate(string fileName)
+        {
+            var asm = Assembly.GetExecutingAssembly();
+
+            // ✅ 실제 내장 리소스 이름 확인 (디버깅에 유용)
+            // var names = asm.GetManifestResourceNames(); // 필요시 확인
+
+            // 기본 네임스페이스는 프로젝트의 Default Namespace와 일치해야 함
+            var resourceName = $"TemplateForge.Resources.Templates.{fileName}";
+            using (var stream = asm.GetManifestResourceStream(resourceName))
+            {
+                if (stream != null)
+                {
+                    using (var reader = new StreamReader(stream))
+                    {
+                        return reader.ReadToEnd();
+                    }
+                }
+            }
+
+            // 파일 시스템 폴백
+            var filePath = Path.Combine(Path.GetDirectoryName(asm.Location) ?? AppDomain.CurrentDomain.BaseDirectory,
+                                        "Resources", "Templates", fileName);
+            if (File.Exists(filePath))
+            {
+                return File.ReadAllText(filePath, System.Text.Encoding.UTF8);
+            }
+
+            throw new FileNotFoundException($"내장 템플릿을 찾을 수 없습니다: {fileName}");
+        }
+
+        private TemplateInfo createImportedTemplateInfo(string fileNameNoExt, string filePath)
+        {
+            var category = this.detectCategory(fileNameNoExt);
+            var isKorean = fileNameNoExt.EndsWith("-ko", StringComparison.OrdinalIgnoreCase)
+                           || fileNameNoExt.Contains("한글", StringComparison.OrdinalIgnoreCase)
+                           || fileNameNoExt.Contains("kr", StringComparison.OrdinalIgnoreCase);
+
+            var language = isKorean ? "한국어" : "English";
+            var displayName = this.formatDisplayName(fileNameNoExt, isKorean);
+            var categoryIcon = this.getCategoryIcon(category);
+
+            return new TemplateInfo(
+                name: displayName,
+                category: categoryIcon + " " + category,
+                language: language,
+                fileName: Path.GetFileName(filePath),
+                filePath: filePath,
+                isKorean: isKorean,
+                isBuiltIn: false,
+                description: this.generateDescription(fileNameNoExt, isKorean)
+            );
+        }
+
+        private string detectCategory(string fileNameNoExt)
+        {
+            if (fileNameNoExt.IndexOf("module", StringComparison.OrdinalIgnoreCase) >= 0) { return "Module"; }
+            if (fileNameNoExt.IndexOf("app", StringComparison.OrdinalIgnoreCase) >= 0
+                || fileNameNoExt.IndexOf("composition", StringComparison.OrdinalIgnoreCase) >= 0) { return "App Composition"; }
+            if (fileNameNoExt.IndexOf("system", StringComparison.OrdinalIgnoreCase) >= 0) { return "System"; }
+            if (fileNameNoExt.IndexOf("integration", StringComparison.OrdinalIgnoreCase) >= 0) { return "Integration"; }
+            if (fileNameNoExt.IndexOf("data", StringComparison.OrdinalIgnoreCase) >= 0
+                || fileNameNoExt.IndexOf("pipeline", StringComparison.OrdinalIgnoreCase) >= 0) { return "Data Pipeline"; }
+            if (fileNameNoExt.IndexOf("migration", StringComparison.OrdinalIgnoreCase) >= 0) { return "Migration"; }
+            if (fileNameNoExt.IndexOf("monitoring", StringComparison.OrdinalIgnoreCase) >= 0) { return "Monitoring"; }
+            if (fileNameNoExt.IndexOf("test", StringComparison.OrdinalIgnoreCase) >= 0) { return "Testing"; }
+
+            return "Custom";
+        }
+
+        private string getCategoryIcon(string category)
+        {
+            switch (category)
+            {
+                case "Module": return "📋";
+                case "App Composition": return "🏢";
+                case "System": return "🖥️";
+                case "Integration": return "🔗";
+                case "Data Pipeline": return "📊";
+                case "Migration": return "🔄";
+                case "Monitoring": return "📈";
+                case "Testing": return "🧪";
+                default: return "📄";
+            }
+        }
+
+        private string formatDisplayName(string fileNameNoExt, bool isKorean)
+        {
+            var name = fileNameNoExt
+                .Replace("-template", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("template-", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("-ko", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("-en", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("-", " ", StringComparison.Ordinal)
+                .Replace("_", " ", StringComparison.Ordinal);
+
+            if (!string.IsNullOrEmpty(name))
+            {
+                name = char.ToUpper(name[0], CultureInfo.InvariantCulture) + name.Substring(1);
+            }
+
+            return string.IsNullOrEmpty(name) ? "Imported Template" : name;
+        }
+
+        private string generateDescription(string fileNameNoExt, bool isKorean)
+        {
+            if (fileNameNoExt.IndexOf("module", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return isKorean ? "모듈 명세 템플릿" : "Module specification template";
+            }
+            if (fileNameNoExt.IndexOf("app", StringComparison.OrdinalIgnoreCase) >= 0
+                || fileNameNoExt.IndexOf("composition", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return isKorean ? "앱 구성 템플릿" : "Application composition template";
+            }
+            return isKorean ? "임포트된 템플릿" : "Imported template";
+        }
+    }
+
+    public sealed class TemplateInfo
+    {
+        // WPF 바인딩을 위해서는 프로퍼티 유지 + 메서드형 getter도 병행
+        public string Name { get; set; }
+        public string Category { get; set; }
+        public string Language { get; set; }
+        public string FileName { get; set; }
+        public string FilePath { get; set; }
+        public bool IsKorean { get; set; }
+        public bool IsBuiltIn { get; set; }
+        public string Description { get; set; }
+
+        public TemplateInfo() { }
+
+        public TemplateInfo(string name, string category, string language, string fileName, string filePath, bool isKorean, bool isBuiltIn, string description)
+        {
+            this.Name = name;
+            this.Category = category;
+            this.Language = language;
+            this.FileName = fileName;
+            this.FilePath = filePath;
+            this.IsKorean = isKorean;
+            this.IsBuiltIn = isBuiltIn;
+            this.Description = description;
+        }
+
+        public string getName() { return this.Name; }
+        public string getCategory() { return this.Category; }
+        public string getLanguage() { return this.Language; }
+        public string getFileName() { return this.FileName; }
+        public string getFilePath() { return this.FilePath; }
+        public bool getIsKorean() { return this.IsKorean; }
+        public bool getIsBuiltIn() { return this.IsBuiltIn; }
+        public string getDescription() { return this.Description; }
+
+        public string getDisplayText() { return $"{this.Name} ({this.Language})"; }
+
+        public string getTooltipText()
+        {
+            var source = this.IsBuiltIn ? "내장" : "임포트";
+            return $"{this.Description}\n\n소스: {source}\n파일: {this.FileName}";
+        }
+    }
+}

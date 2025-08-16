@@ -1,0 +1,62 @@
+# 테스트용 YAML 템플릿
+module: TestModule
+goal: "템플릿 포지 테스트용 모듈"
+
+structure:
+  - name: Core
+    description: "핵심 기능"
+  - name: Models
+    description: "데이터 모델"
+  - name: Services
+    description: "비즈니스 로직"
+  - name: Controllers
+    description: "API 컨트롤러"
+  - name: Tests
+    description: "테스트 코드"
+
+api:
+  - name: CreateItem
+    method: POST
+    path: /api/items
+  - name: GetItem
+    method: GET
+    path: /api/items/{id}
+  - name: UpdateItem
+    method: PUT
+    path: /api/items/{id}
+  - name: DeleteItem
+    method: DELETE
+    path: /api/items/{id}
+
+events:
+  - name: ItemCreated
+    payload: ItemData
+  - name: ItemUpdated
+    payload: ItemData
+  - name: ItemDeleted
+    payload: ItemId
+
+models:
+  - name: Item
+    fields:
+      - id: string
+      - name: string
+      - quantity: number
+      - created: datetime
+  - name: ItemData
+    fields:
+      - item: Item
+      - timestamp: datetime
+
+dependencies:
+  - module: Database
+    version: "^1.0.0"
+  - module: Logger
+    version: "^2.0.0"
+
+constraints:
+  performance:
+    responseTime: "< 100ms"
+    throughput: "> 1000 req/s"
+  memory:
+    maxHeap: "512MB"

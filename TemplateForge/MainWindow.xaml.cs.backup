@@ -1,0 +1,284 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using Microsoft.Win32;
+using TemplateForge.Core;
+using TemplateForge.Services;
+
+namespace TemplateForge
+{
+    /// <summary>
+    /// MainWindow.xaml에 대한 상호 작용 논리
+    /// </summary>
+    public partial class MainWindow : Window
+    {
+        private readonly TemplateLoader templateLoader;
+        private bool isUpdatingFromTemplate = false;
+
+        public MainWindow()
+        {
+            InitializeComponent();
+            this.templateLoader = new TemplateLoader();
+            
+            this.Loaded += MainWindow_Loaded;
+        }
+
+        private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            // 템플릿 목록 로드
+            loadTemplates();
+            
+            // FastMCP 상태 체크
+            await checkFastMcpStatus();
+        }
+
+        private void loadTemplates()
+        {
+            try
+            {
+                var templates = this.templateLoader.getAvailableTemplates();
+                this.TemplateListBox.ItemsSource = templates;
+                this.TemplateListBox.DisplayMemberPath = "Name";
+
+                if (templates.Any())
+                {
+                    this.TemplateListBox.SelectedIndex = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"템플릿 로드 오류: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private async Task checkFastMcpStatus()
+        {
+            try
+            {
+                if (App.FastMcpClient != null)
+                {
+                    // 간단한 헬스체크 (실제로는 별도 API 호출)
+                    this.StatusIndicator.Fill = new SolidColorBrush(Colors.Green);
+                    this.StatusText.Text = "Connected";
+                }
+                else
+                {
+                    this.StatusIndicator.Fill = new SolidColorBrush(Colors.Red);
+                    this.StatusText.Text = "Disconnected";
+                }
+            }
+            catch
+            {
+                this.StatusIndicator.Fill = new SolidColorBrush(Colors.Red);
+                this.StatusText.Text = "Error";
+            }
+        }
+
+        private void TemplateListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (this.TemplateListBox.SelectedItem is TemplateInfo selectedTemplate)
+            {
+                this.isUpdatingFromTemplate = true;
+                try
+                {
+                    //  string 대신 TemplateInfo 전달
+                    var templateContent = this.templateLoader.loadTemplate(selectedTemplate);
+                    this.YamlEditor.Text = templateContent;
+                    this.updateModuleName(templateContent);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"템플릿 로드 오류: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+                finally
+                {
+                    this.isUpdatingFromTemplate = false;
+                }
+            }
+        }
+
+
+        private void updateModuleName(string yamlContent)
+        {
+            // 간단한 YAML 파싱으로 모듈명 추출
+            var lines = yamlContent.Split('\n');
+            foreach (var line in lines)
+            {
+                if (line.Trim().StartsWith("module:"))
+                {
+                    var moduleName = line.Split(':')[1].Trim().Trim('"');
+                    if (!string.IsNullOrEmpty(moduleName) && moduleName != "모듈명" && moduleName != "MODULE_NAME")
+                    {
+                        this.ModuleNameTextBox.Text = moduleName;
+                        break;
+                    }
+                }
+            }
+        }
+
+        private async void Generate_Click(object sender, RoutedEventArgs e)
+        {
+            if (App.FastMcpClient == null)
+            {
+                MessageBox.Show("FastMCP 서버가 연결되지 않았습니다.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            try
+            {
+                this.GenerateButton.IsEnabled = false;
+                this.GenerateButton.Content = "생성 중...";
+
+                var yamlContent = this.YamlEditor.Text;
+                var outputPath = this.OutputPathTextBox.Text;
+
+                // YAML에서 모듈명 교체
+                yamlContent = replaceModuleName(yamlContent, this.ModuleNameTextBox.Text);
+
+                var response = await App.FastMcpClient.generateProjectAsync(yamlContent, outputPath);
+
+                if (response.success)
+                {
+                    MessageBox.Show(
+                        $"프로젝트가 성공적으로 생성되었습니다!\n\n" +
+                        $"모듈: {response.module_name}\n" +
+                        $"생성된 폴더: {response.created_folders?.Length ?? 0}개\n" +
+                        $"위치: {Path.Combine(outputPath, response.module_name)}",
+                        "Success",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+
+                    // 생성된 폴더 열기
+                    var folderPath = Path.Combine(outputPath, response.module_name);
+                    if (Directory.Exists(folderPath))
+                    {
+                        System.Diagnostics.Process.Start("explorer.exe", folderPath);
+                    }
+                }
+                else
+                {
+                    MessageBox.Show("프로젝트 생성에 실패했습니다.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"프로젝트 생성 오류: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                this.GenerateButton.IsEnabled = true;
+                this.GenerateButton.Content = "🚀 Generate";
+            }
+        }
+
+        private async void Validate_Click(object sender, RoutedEventArgs e)
+        {
+            if (App.FastMcpClient == null)
+            {
+                this.ValidationResults.Text = "FastMCP 서버가 연결되지 않았습니다.";
+                return;
+            }
+
+            try
+            {
+                var yamlContent = replaceModuleName(this.YamlEditor.Text, this.ModuleNameTextBox.Text);
+                var response = await App.FastMcpClient.validateYamlAsync(yamlContent);
+
+                if (response.valid)
+                {
+                    this.ValidationResults.Text = "✅ YAML 검증 성공!\n\n유효한 명세입니다.";
+                    this.ValidationResults.Foreground = new SolidColorBrush(Colors.Green);
+                }
+                else
+                {
+                    this.ValidationResults.Text = "❌ YAML 검증 실패:\n\n" + string.Join("\n", response.errors ?? new string[0]);
+                    this.ValidationResults.Foreground = new SolidColorBrush(Colors.Red);
+                }
+            }
+            catch (Exception ex)
+            {
+                this.ValidationResults.Text = $"❌ 검증 오류: {ex.Message}";
+                this.ValidationResults.Foreground = new SolidColorBrush(Colors.Red);
+            }
+        }
+
+        private async void Preview_Click(object sender, RoutedEventArgs e)
+        {
+            await updatePreview();
+        }
+
+        private async void YamlEditor_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (this.isUpdatingFromTemplate)
+            {
+                return;
+            }
+
+            // 실시간 프리뷰 업데이트 (디바운스 없이 간단하게)
+            await updatePreview();
+        }
+
+        private async Task updatePreview()
+        {
+            if (App.FastMcpClient == null)
+            {
+                this.GeneratedFiles.Text = "FastMCP 서버가 연결되지 않았습니다.";
+                return;
+            }
+
+            try
+            {
+                var yamlContent = this.replaceModuleName(this.YamlEditor.Text, this.ModuleNameTextBox.Text);
+                var response = await App.FastMcpClient.previewStructureAsync(yamlContent);
+
+                if (response.success && response.structure != null)
+                {
+                    var preview = $"📁 {response.structure.module_name}/\n";
+                    foreach (var folder in response.structure.folders ?? Array.Empty<string>()) { preview += $"├── 📁 {folder}/\n"; }
+                    foreach (var file in response.structure.files ?? Array.Empty<string>()) { preview += $"├── 📄 {file}\n"; }
+
+                    this.GeneratedFiles.Text = preview;
+                    this.GeneratedFiles.Foreground = new SolidColorBrush(Colors.Black);
+                }
+                else
+                {
+                    this.GeneratedFiles.Text = "구조를 생성할 수 없습니다.";
+                    this.GeneratedFiles.Foreground = new SolidColorBrush(Colors.Gray);
+                }
+            }
+            catch (Exception ex)
+            {
+                this.GeneratedFiles.Text = $"미리보기 오류: {ex.Message}";
+                this.GeneratedFiles.Foreground = new SolidColorBrush(Colors.Red);
+            }
+        }
+
+
+        private string replaceModuleName(string yamlContent, string newModuleName)
+        {
+            // 간단한 모듈명 교체
+            return yamlContent
+                .Replace("module: 모듈명", $"module: {newModuleName}")
+                .Replace("module: MODULE_NAME", $"module: {newModuleName}");
+        }
+
+        private void BrowseOutputPath_Click(object sender, RoutedEventArgs e)
+        {
+            using (var dialog = new System.Windows.Forms.FolderBrowserDialog())
+            {
+                dialog.Description = "출력 폴더를 선택하세요.";
+                dialog.ShowNewFolderButton = true;
+                var result = dialog.ShowDialog();
+                if (result == System.Windows.Forms.DialogResult.OK && !string.IsNullOrWhiteSpace(dialog.SelectedPath))
+                {
+                    this.OutputPathTextBox.Text = dialog.SelectedPath;
+                }
+            }
+        }
+
+    }
+}

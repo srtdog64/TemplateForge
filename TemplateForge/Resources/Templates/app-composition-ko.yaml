@@ -1,0 +1,52 @@
+# === 앱 구성 템플릿 (기본) ===
+composition: APP_NAME
+goal: "앱 전역 조립/수명/흐름을 결정적으로 구성"
+
+context:
+  environments: [ "dev", "staging", "prod" ]
+  assumptions:
+    - "동일 인터페이스는 환경별 다른 구현으로 바인딩 가능"
+    - "시작/종료/이벤트 흐름은 선언적으로 정의"
+
+modules:
+  registry:
+    - name: ModuleA
+      interface: IModuleA
+      impl: ModuleAImpl
+      lifecycle: "Singleton"
+      dependsOn: [ "ModuleB" ]
+
+bindings:
+  implementation:
+    IModuleA: ModuleAImpl
+  lifecycle:
+    ModuleAImpl: "Singleton"
+
+entryPoints:
+  - name: MainEntry
+    onStart: [ "ModuleA.Init()", "ModuleB.Warmup()" ]
+    onStop:  [ "ModuleB.Dispose()", "ModuleA.Dispose()" ]
+
+eventFlows:
+  - from: EventA
+    to: [ "ModuleA.Handle", "ModuleB.Handle" ]
+    delivery: "at-least-once"
+    idempotencyBy: "eventId"
+
+threading:
+  model: "MainThread + Jobs"
+  queues: [ "MainQueue", "WorkerQueue" ]
+  backpressure: "buffer"
+
+constraints:
+  perf: { frameBudgetMs: 0.2 }
+  memory: { steadyStateBytes: "target", allocBytesPerTick: 0 }
+  determinism: true
+
+telemetry:
+  metrics: [ "op_latency_ms", "alloc_bytes" ]
+  logs:    [ "ERROR on exception" ]
+
+tests:
+  - "구성 그래프 순환 의존성 금지 검증"
+  - "시작→정상 이벤트→종료 시나리오 스모크"
