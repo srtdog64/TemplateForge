@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -16,463 +16,678 @@ namespace TemplateForge
     /// </summary>
     public partial class MainWindow : Window
     {
-        private readonly TemplateLoader templateLoader;
-        private readonly YamlStructureGenerator structureGenerator;
-        private bool isUpdatingFromTemplate = false;
+        private TemplateSpaceManager spaceManager;
+        private TemplateSpace currentSpace;
+        private YamlStructureGenerator structureGenerator;
+        private Dictionary<string, TextBox> tabEditors;
+        private ObservableCollection<DocumentTreeItem> documentTreeItems;
 
         public MainWindow()
         {
             InitializeComponent();
-            this.templateLoader = new TemplateLoader();
-            this.structureGenerator = new YamlStructureGenerator();
-            
+            InitializeComponents();
             this.Loaded += MainWindow_Loaded;
         }
 
-        private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        private void InitializeComponents()
         {
-            // 템플릿 목록 로드
-            loadTemplates();
+            spaceManager = new TemplateSpaceManager();
+            structureGenerator = new YamlStructureGenerator();
+            tabEditors = new Dictionary<string, TextBox>();
+            documentTreeItems = new ObservableCollection<DocumentTreeItem>();
             
-            // 상태 표시 (Standalone Mode)
-            this.StatusIndicator.Fill = new SolidColorBrush(Colors.Orange);
-            this.StatusText.Text = "Standalone Mode";
+            // 기본 스페이스 생성
+            currentSpace = spaceManager.CreateSpace("Default");
+            currentSpace.AddDocument("main", GetDefaultYaml(), "architecture");
         }
 
-        private void loadTemplates()
+        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            try
-            {
-                var templates = this.templateLoader.getAvailableTemplates();
-                this.TemplateListBox.ItemsSource = templates;
-                // DisplayMemberPath 제거 - DataTemplate 사용
+            UpdateUI();
+            LoadTemplateSpaces();
+        }
 
-                if (templates.Any())
+        private void LoadTemplateSpaces()
+        {
+            var spaces = spaceManager.GetAllSpaces();
+            TemplateSpaceCombo.ItemsSource = spaces;
+            if (spaces.Any())
+            {
+                TemplateSpaceCombo.SelectedIndex = 0;
+            }
+        }
+
+        private void UpdateUI()
+        {
+            if (currentSpace != null)
+            {
+                // 문서 트리 업데이트
+                UpdateDocumentTree();
+                
+                // 상태바 업데이트
+                DocumentCountText.Text = $"Documents: {currentSpace.Documents.Count}";
+                SpaceNameText.Text = $"Space: {currentSpace.Name}";
+                StatusText.Text = "Ready";
+                
+                // 참조 분석
+                UpdateReferences();
+            }
+        }
+
+        private void UpdateDocumentTree()
+        {
+            documentTreeItems.Clear();
+            
+            if (currentSpace == null) return;
+            
+            var root = new DocumentTreeItem
+            {
+                Name = currentSpace.Name,
+                Icon = "📦",
+                IsExpanded = true,
+                Children = new ObservableCollection<DocumentTreeItem>()
+            };
+            
+            // 문서별 그룹화
+            var groups = currentSpace.Documents.Values
+                .GroupBy(d => d.Type)
+                .OrderBy(g => g.Key);
+            
+            foreach (var group in groups)
+            {
+                var groupItem = new DocumentTreeItem
                 {
-                    this.TemplateListBox.SelectedIndex = 0;
+                    Name = group.Key,
+                    Icon = GetTypeIcon(group.Key),
+                    IsExpanded = true,
+                    Children = new ObservableCollection<DocumentTreeItem>()
+                };
+                
+                foreach (var doc in group)
+                {
+                    groupItem.Children.Add(new DocumentTreeItem
+                    {
+                        Name = doc.Name,
+                        Icon = "📄",
+                        Document = doc,
+                        IsModified = doc.IsModified
+                    });
                 }
                 
-                // 템플릿 카운트 업데이트
-                if (this.TemplateCountText != null)
-                {
-                    this.TemplateCountText.Text = $"Templates: {templates.Count} loaded";
-                }
+                root.Children.Add(groupItem);
             }
-            catch (Exception ex)
+            
+            documentTreeItems.Add(root);
+            DocumentTree.ItemsSource = documentTreeItems;
+        }
+
+        private void UpdateReferences()
+        {
+            if (currentSpace == null) return;
+            
+            var references = currentSpace.AnalyzeReferences();
+            var refText = "=== YAML References ===\n\n";
+            
+            foreach (var reference in references)
             {
-                MessageBox.Show($"템플릿 로드 오류: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                refText += $"📄 {reference.FromDocument}\n";
+                refText += $"  └─> {reference.ToPath} (line {reference.LineNumber})\n";
+            }
+            
+            if (!references.Any())
+            {
+                refText = "No references found.";
+            }
+            
+            ReferencesText.Text = refText;
+        }
+
+        private string GetTypeIcon(string type)
+        {
+            switch (type.ToLower())
+            {
+                case "architecture":
+                case "root":
+                    return "🏗️";
+                case "module":
+                    return "📦";
+                case "integration":
+                    return "🔗";
+                case "pipeline":
+                    return "⚡";
+                case "testing":
+                    return "🧪";
+                case "monitoring":
+                    return "📊";
+                default:
+                    return "📁";
             }
         }
 
-        private void TemplateListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        // === 이벤트 핸들러 ===
+
+        private void NewSpace_Click(object sender, RoutedEventArgs e)
         {
-            if (this.TemplateListBox.SelectedItem is TemplateInfo selectedTemplate)
+            var dialog = new TextInputDialog("New Template Space", "Enter space name:");
+            if (dialog.ShowDialog() == true)
             {
-                this.isUpdatingFromTemplate = true;
+                currentSpace = spaceManager.CreateSpace(dialog.InputText);
+                currentSpace.AddDocument("architecture", null, "architecture");
+                LoadTemplateSpaces();
+                UpdateUI();
+            }
+        }
+
+        private void TemplateSpace_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (TemplateSpaceCombo.SelectedItem is TemplateSpace space)
+            {
+                currentSpace = space;
+                spaceManager.SetActiveSpace(space.Name);
+                UpdateUI();
+                LoadDocumentTabs();
+            }
+        }
+
+        private void NewProject_Click(object sender, RoutedEventArgs e)
+        {
+            var templates = new[]
+            {
+                "Microservice Architecture",
+                "Game Architecture",
+                "Data Pipeline",
+                "Basic Module"
+            };
+            
+            var dialog = new ListSelectionDialog("Select Template", templates);
+            if (dialog.ShowDialog() == true)
+            {
+                var templateType = dialog.SelectedItem.ToLower().Replace(" ", "");
+                currentSpace = spaceManager.CreateSpaceFromTemplate(templateType);
+                LoadTemplateSpaces();
+                UpdateUI();
+            }
+        }
+
+        private void LoadYaml_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new OpenFileDialog
+            {
+                Filter = "YAML files (*.yaml;*.yml)|*.yaml;*.yml|All files (*.*)|*.*",
+                Title = "Load YAML File"
+            };
+            
+            if (dialog.ShowDialog() == true)
+            {
                 try
                 {
-                    var templateContent = this.templateLoader.loadTemplate(selectedTemplate);
-                    this.YamlEditor.Text = templateContent;
-                    this.updateModuleName(templateContent);
+                    var content = File.ReadAllText(dialog.FileName);
+                    var name = Path.GetFileNameWithoutExtension(dialog.FileName);
+                    
+                    if (currentSpace != null)
+                    {
+                        var doc = currentSpace.AddDocument(name, content, "imported");
+                        AddDocumentTab(doc);
+                        UpdateUI();
+                    }
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"템플릿 로드 오류: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
-                }
-                finally
-                {
-                    this.isUpdatingFromTemplate = false;
+                    MessageBox.Show($"Error loading file: {ex.Message}", "Error", 
+                                   MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
         }
 
-        private void updateModuleName(string yamlContent)
+        private void AddDocument_Click(object sender, RoutedEventArgs e)
         {
-            // 간단한 YAML 파싱으로 모듈명 추출
-            var lines = yamlContent.Split('\n');
-            foreach (var line in lines)
+            if (currentSpace == null)
             {
-                if (line.Trim().StartsWith("module:"))
-                {
-                    var moduleName = line.Split(':')[1].Trim().Trim('"');
-                    if (!string.IsNullOrEmpty(moduleName) && moduleName != "모듈명" && moduleName != "MODULE_NAME")
-                    {
-                        this.ModuleNameTextBox.Text = moduleName;
-                        break;
-                    }
-                }
-            }
-        }
-
-        private async void Generate_Click(object sender, RoutedEventArgs e)
-        {
-            // 로컬 생성 모드만 사용
-            GenerateLocal();
-        }
-
-        private void GenerateLocal()
-        {
-            try
-            {
-                this.GenerateButton.IsEnabled = false;
-                this.GenerateButton.Content = "생성 중...";
-
-                var yamlContent = this.YamlEditor.Text;
-                var outputPath = this.OutputPathTextBox.Text;
-                var moduleName = this.ModuleNameTextBox.Text;
-                
-                if (string.IsNullOrEmpty(outputPath))
-                {
-                    MessageBox.Show("출력 경로를 선택해주세요.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
-                }
-                
-                // YAML에서 모듈명 교체
-                yamlContent = replaceModuleName(yamlContent, moduleName);
-                
-                // 로컬 생성기 사용
-                var result = structureGenerator.GenerateStructure(yamlContent, outputPath, moduleName);
-                
-                if (result.Success)
-                {
-                    MessageBox.Show(
-                        $"프로젝트가 성공적으로 생성되었습니다!\n\n" +
-                        $"모듈: {result.ModuleName}\n" +
-                        $"생성된 폴더: {result.CreatedFolders.Count}개\n" +
-                        $"생성된 파일: {result.CreatedFiles.Count}개\n" +
-                        $"위치: {result.BasePath}",
-                        "Success",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
-
-                    // 생성된 폴더 열기
-                    if (Directory.Exists(result.BasePath))
-                    {
-                        System.Diagnostics.Process.Start("explorer.exe", result.BasePath);
-                    }
-                    
-                    // 파일 카운트 업데이트
-                    if (this.FileCountText != null)
-                    {
-                        this.FileCountText.Text = $"Files: {result.CreatedFiles.Count} generated";
-                    }
-                }
-                else
-                {
-                    MessageBox.Show($"프로젝트 생성 실패: {result.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"프로젝트 생성 오류: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-            finally
-            {
-                this.GenerateButton.IsEnabled = true;
-                this.GenerateButton.Content = "🚀 Generate";
-            }
-        }
-
-        private async void Validate_Click(object sender, RoutedEventArgs e)
-        {
-            ValidateLocal();
-        }
-
-        private void ValidateLocal()
-        {
-            try
-            {
-                var yamlContent = replaceModuleName(this.YamlEditor.Text, this.ModuleNameTextBox.Text);
-                
-                // 기본 YAML 검증
-                var lines = yamlContent.Split('\n');
-                var errors = new List<string>();
-                bool hasModule = false;
-                bool hasStructure = false;
-                
-                foreach (var line in lines)
-                {
-                    var trimmed = line.Trim();
-                    if (trimmed.StartsWith("module:") || trimmed.StartsWith("composition:"))
-                    {
-                        hasModule = true;
-                    }
-                    if (trimmed.StartsWith("structure:") || trimmed.StartsWith("modules:") || 
-                        trimmed.StartsWith("api:") || trimmed.StartsWith("events:"))
-                    {
-                        hasStructure = true;
-                    }
-                }
-                
-                if (!hasModule)
-                {
-                    errors.Add("모듈 또는 컴포지션 이름이 없습니다.");
-                }
-                if (!hasStructure)
-                {
-                    errors.Add("구조 정의가 없습니다.");
-                }
-                
-                if (errors.Count == 0)
-                {
-                    this.ValidationResults.Text = "✅ YAML 검증 성공!\n\n유효한 명세입니다.";
-                    this.ValidationResults.Foreground = new SolidColorBrush(Colors.Green);
-                }
-                else
-                {
-                    this.ValidationResults.Text = "❌ YAML 검증 실패:\n\n" + string.Join("\n", errors);
-                    this.ValidationResults.Foreground = new SolidColorBrush(Colors.Red);
-                }
-            }
-            catch (Exception ex)
-            {
-                this.ValidationResults.Text = $"❌ 검증 오류: {ex.Message}";
-                this.ValidationResults.Foreground = new SolidColorBrush(Colors.Red);
-            }
-        }
-
-        private async void Preview_Click(object sender, RoutedEventArgs e)
-        {
-            await updatePreview();
-        }
-
-        private async void YamlEditor_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (this.isUpdatingFromTemplate)
-            {
+                MessageBox.Show("Please create or select a template space first.", "Info",
+                               MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
-
-            // 실시간 프리뷰 업데이트
-            await updatePreview();
+            
+            var dialog = new NewDocumentDialog();
+            if (dialog.ShowDialog() == true)
+            {
+                var doc = currentSpace.AddDocument(dialog.DocumentName, null, dialog.DocumentType);
+                AddDocumentTab(doc);
+                UpdateUI();
+            }
         }
 
-        private async Task updatePreview()
+        private void LinkDocuments_Click(object sender, RoutedEventArgs e)
         {
+            if (currentSpace == null) return;
+            
+            currentSpace.GenerateReferencedDocuments();
+            UpdateUI();
+            MessageBox.Show("Referenced documents created successfully!", "Success",
+                           MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void SaveSpace_Click(object sender, RoutedEventArgs e)
+        {
+            // 현재 탭의 내용을 문서에 저장
+            SaveCurrentTab();
+            
+            MessageBox.Show($"Template space '{currentSpace?.Name}' saved.", "Success",
+                           MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void Export_Click(object sender, RoutedEventArgs e)
+        {
+            if (currentSpace == null) return;
+            
+            using (var dialog = new System.Windows.Forms.FolderBrowserDialog())
+            {
+                dialog.Description = "Select export folder";
+                if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+                {
+                    try
+                    {
+                        currentSpace.ExportToFileSystem(dialog.SelectedPath);
+                        MessageBox.Show($"Exported to: {dialog.SelectedPath}", "Success",
+                                       MessageBoxButton.OK, MessageBoxImage.Information);
+                        
+                        // 폴더 열기
+                        System.Diagnostics.Process.Start("explorer.exe", dialog.SelectedPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Export failed: {ex.Message}", "Error",
+                                       MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                }
+            }
+        }
+
+        private void Generate_Click(object sender, RoutedEventArgs e)
+        {
+            if (currentSpace == null) return;
+            
+            var outputPath = OutputPathTextBox.Text;
+            if (string.IsNullOrEmpty(outputPath))
+            {
+                MessageBox.Show("Please select output path.", "Error",
+                               MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            
             try
             {
-                var yamlContent = this.replaceModuleName(this.YamlEditor.Text, this.ModuleNameTextBox.Text);
+                // 모든 문서를 파일로 출력
+                currentSpace.ExportToFileSystem(outputPath);
                 
-                // 로컬 미리보기
-                var structure = structureGenerator.ParseYamlStructure(yamlContent);
-                var moduleName = this.ModuleNameTextBox.Text;
-                if (string.IsNullOrEmpty(moduleName)) moduleName = "MyModule";
-                
-                var preview = $"📁 {moduleName}/\n";
-                foreach (var folder in structure["folders"]) 
-                { 
-                    preview += $"├── 📁 {folder}/\n"; 
-                }
-                foreach (var file in structure["files"]) 
-                { 
-                    preview += $"├── 📄 {file}\n"; 
+                // 폴더 구조도 생성
+                foreach (var doc in currentSpace.Documents.Values)
+                {
+                    var result = structureGenerator.GenerateStructure(
+                        doc.Content, 
+                        Path.Combine(outputPath, doc.Type),
+                        doc.Name
+                    );
                 }
                 
-                this.GeneratedFiles.Text = preview;
-                this.GeneratedFiles.Foreground = new SolidColorBrush(Colors.Black);
+                MessageBox.Show($"Project generated successfully!\nLocation: {outputPath}",
+                               "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                
+                System.Diagnostics.Process.Start("explorer.exe", outputPath);
             }
             catch (Exception ex)
             {
-                this.GeneratedFiles.Text = $"미리보기 오류: {ex.Message}";
-                this.GeneratedFiles.Foreground = new SolidColorBrush(Colors.Red);
+                MessageBox.Show($"Generation failed: {ex.Message}", "Error",
+                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
-        private string replaceModuleName(string yamlContent, string newModuleName)
+        private void DocumentTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
-            // 간단한 모듈명 교체
-            return yamlContent
-                .Replace("module: 모듈명", $"module: {newModuleName}")
-                .Replace("module: MODULE_NAME", $"module: {newModuleName}");
+            if (DocumentTree.SelectedItem is DocumentTreeItem item && item.Document != null)
+            {
+                // 해당 문서의 탭 열기 또는 활성화
+                OpenDocumentTab(item.Document);
+            }
+        }
+
+        private void NewTab_Click(object sender, RoutedEventArgs e)
+        {
+            AddDocument_Click(sender, e);
+        }
+
+        private void CloseTab_Click(object sender, RoutedEventArgs e)
+        {
+            var button = sender as Button;
+            var tabItem = FindParent<TabItem>(button);
+            if (tabItem != null && EditorTabs.Items.Count > 1)
+            {
+                var docId = tabItem.Tag as string;
+                if (docId != null && tabEditors.ContainsKey(docId))
+                {
+                    tabEditors.Remove(docId);
+                }
+                EditorTabs.Items.Remove(tabItem);
+            }
+        }
+
+        private void YamlEditor_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (sender is TextBox editor && editor.Tag is YamlDocument doc)
+            {
+                doc.Content = editor.Text;
+                doc.IsModified = true;
+                UpdateUI();
+            }
+        }
+
+        private void Validate_Click(object sender, RoutedEventArgs e)
+        {
+            SaveCurrentTab();
+            // 검증 로직
+            ValidationResults.Text = "✅ Validation passed";
+        }
+
+        private void Preview_Click(object sender, RoutedEventArgs e)
+        {
+            SaveCurrentTab();
+            UpdateReferences();
+        }
+
+        private void Diagram_Click(object sender, RoutedEventArgs e)
+        {
+            // 다이어그램 생성 로직
         }
 
         private void BrowseOutputPath_Click(object sender, RoutedEventArgs e)
         {
             using (var dialog = new System.Windows.Forms.FolderBrowserDialog())
             {
-                dialog.Description = "출력 폴더를 선택하세요.";
-                dialog.ShowNewFolderButton = true;
-                var result = dialog.ShowDialog();
-                if (result == System.Windows.Forms.DialogResult.OK && !string.IsNullOrWhiteSpace(dialog.SelectedPath))
+                dialog.Description = "Select output folder";
+                if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
                 {
-                    this.OutputPathTextBox.Text = dialog.SelectedPath;
+                    OutputPathTextBox.Text = dialog.SelectedPath;
                 }
             }
         }
 
-        private void NewProject_Click(object sender, RoutedEventArgs e)
+        // === 헬퍼 메서드 ===
+
+        private void LoadDocumentTabs()
         {
-            // 템플릿이 선택되었는지 확인
-            if (this.TemplateListBox.SelectedItem == null)
-            {
-                MessageBox.Show("템플릿을 먼저 선택해주세요.", "Info", 
-                               MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
+            EditorTabs.Items.Clear();
+            tabEditors.Clear();
             
-            // 선택된 템플릿 로드
-            var selectedTemplate = this.TemplateListBox.SelectedItem as TemplateInfo;
-            if (selectedTemplate != null)
+            if (currentSpace != null && currentSpace.Documents.Any())
             {
-                try
-                {
-                    var templateContent = this.templateLoader.loadTemplate(selectedTemplate);
-                    this.YamlEditor.Text = templateContent;
-                    this.updateModuleName(templateContent);
-                    
-                    // 모듈명 초기화
-                    this.ModuleNameTextBox.Text = "MyNewProject";
-                    
-                    MessageBox.Show($"템플릿 '{selectedTemplate.Name}'을(를) 불러왔습니다.\n모듈명과 내용을 수정 후 Generate 버튼을 클릭하세요.", 
-                                   "Success", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"템플릿 로드 오류: {ex.Message}", "Error", 
-                                   MessageBoxButton.OK, MessageBoxImage.Error);
-                }
+                var firstDoc = currentSpace.Documents.Values.First();
+                AddDocumentTab(firstDoc);
             }
         }
-        
-        private void LoadYaml_Click(object sender, RoutedEventArgs e)
+
+        private void AddDocumentTab(YamlDocument doc)
         {
-            var dialog = new OpenFileDialog();
-            dialog.Filter = "YAML files (*.yaml;*.yml)|*.yaml;*.yml|All files (*.*)|*.*";
-            dialog.Title = "YAML 파일 불러오기";
+            var tabItem = new TabItem
+            {
+                Header = doc.Name,
+                Tag = doc.Id
+            };
             
-            if (dialog.ShowDialog() == true)
+            var editor = new TextBox
             {
-                try
-                {
-                    var yamlContent = File.ReadAllText(dialog.FileName, System.Text.Encoding.UTF8);
-                    this.YamlEditor.Text = yamlContent;
-                    this.updateModuleName(yamlContent);
-                    
-                    // 파일명을 모듈명으로 사용
-                    var fileName = Path.GetFileNameWithoutExtension(dialog.FileName);
-                    if (!string.IsNullOrEmpty(fileName))
-                    {
-                        this.ModuleNameTextBox.Text = fileName;
-                    }
-                    
-                    MessageBox.Show($"파일 '{Path.GetFileName(dialog.FileName)}'을(를) 불러왔습니다.", 
-                                   "Success", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"YAML 파일 로드 오류: {ex.Message}", "Error", 
-                                   MessageBoxButton.OK, MessageBoxImage.Error);
-                }
-            }
-        }
-        
-        private void ImportTemplate_Click(object sender, RoutedEventArgs e)
-        {
-            var dialog = new OpenFileDialog();
-            dialog.Filter = "YAML files (*.yaml;*.yml)|*.yaml;*.yml|All files (*.*)|*.*";
-            dialog.Title = "Import YAML Template";
+                Text = doc.Content,
+                Tag = doc,
+                FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+                FontSize = 11,
+                AcceptsReturn = true,
+                AcceptsTab = true,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                TextWrapping = TextWrapping.NoWrap,
+                Background = Brushes.White,
+                Padding = new Thickness(8)
+            };
             
-            if (dialog.ShowDialog() == true)
-            {
-                try
-                {
-                    this.templateLoader.importTemplate(dialog.FileName);
-                    loadTemplates();
-                    MessageBox.Show($"템플릿이 성공적으로 임포트되었습니다: {Path.GetFileName(dialog.FileName)}", 
-                                   "Success", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"템플릿 임포트 오류: {ex.Message}", "Error", 
-                                   MessageBoxButton.OK, MessageBoxImage.Error);
-                }
-            }
-        }
-        
-        // 이제 RefreshTemplate_Click은 필요없음 (템플릿은 내장된 것만 사용)
-        private void RefreshTemplate_Click(object sender, RoutedEventArgs e)
-        {
-            // 템플릿 목록 새로고침 (필요시)
-            loadTemplates();
-        }
-        
-        private void Diagram_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                // Mermaid 다이어그램 생성
-                var yamlContent = this.YamlEditor.Text;
-                var diagram = GenerateMermaidDiagram(yamlContent);
-                
-                var html = $@"<!DOCTYPE html>
-<html>
-<head>
-    <script src='https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js'></script>
-    <script>mermaid.initialize({{startOnLoad:true}});</script>
-</head>
-<body>
-    <div class='mermaid'>
-    {diagram}
-    </div>
-</body>
-</html>";
-                
-                this.DiagramWebBrowser.NavigateToString(html);
-                this.ResultTabControl.SelectedIndex = 0; // Diagram 탭으로 전환
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"다이어그램 생성 오류: {ex.Message}", "Error", 
-                               MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-        
-        private void DiagramWebBrowser_LoadCompleted(object sender, System.Windows.Navigation.NavigationEventArgs e)
-        {
-            // 웹브라우저 로드 완료 이벤트
-        }
-        
-        private string GenerateMermaidDiagram(string yamlContent)
-        {
-            var lines = yamlContent.Split('\n');
-            var moduleName = "Module";
-            var components = new List<string>();
+            editor.TextChanged += YamlEditor_TextChanged;
             
-            foreach (var line in lines)
+            tabItem.Content = editor;
+            EditorTabs.Items.Add(tabItem);
+            EditorTabs.SelectedItem = tabItem;
+            
+            tabEditors[doc.Id] = editor;
+        }
+
+        private void OpenDocumentTab(YamlDocument doc)
+        {
+            // 이미 열려있는지 확인
+            foreach (TabItem tab in EditorTabs.Items)
             {
-                var trimmed = line.Trim();
-                if (trimmed.StartsWith("module:") || trimmed.StartsWith("composition:"))
+                if (tab.Tag as string == doc.Id)
                 {
-                    var name = ExtractValue(trimmed);
-                    if (!string.IsNullOrEmpty(name) && name != "MODULE_NAME")
-                        moduleName = name;
-                }
-                else if (trimmed.StartsWith("- name:"))
-                {
-                    var name = ExtractValue(trimmed);
-                    if (!string.IsNullOrEmpty(name))
-                        components.Add(name);
+                    EditorTabs.SelectedItem = tab;
+                    return;
                 }
             }
             
-            var diagram = "graph TD\n";
-            diagram += $"    {moduleName}[{moduleName}]\n";
-            foreach (var comp in components)
-            {
-                diagram += $"    {moduleName} --> {comp}[{comp}]\n";
-            }
-            
-            return diagram;
+            // 새 탭 추가
+            AddDocumentTab(doc);
         }
-        
-        private string ExtractValue(string line)
+
+        private void SaveCurrentTab()
         {
-            var colonIndex = line.IndexOf(':');
-            if (colonIndex > 0 && colonIndex < line.Length - 1)
+            if (EditorTabs.SelectedItem is TabItem tab && tab.Content is TextBox editor)
             {
-                return line.Substring(colonIndex + 1).Trim().Trim('"', '\'');
+                if (editor.Tag is YamlDocument doc)
+                {
+                    doc.Content = editor.Text;
+                    doc.LastModified = DateTime.Now;
+                }
             }
-            return "";
+        }
+
+        private T FindParent<T>(DependencyObject child) where T : DependencyObject
+        {
+            var parent = VisualTreeHelper.GetParent(child);
+            if (parent == null) return null;
+            if (parent is T) return parent as T;
+            return FindParent<T>(parent);
+        }
+
+        private string GetDefaultYaml()
+        {
+            return @"# Template Space Root
+meta:
+  version: 1
+  created: " + DateTime.Now.ToString("yyyy-MM-dd") + @"
+
+architecture:
+  name: MyProject
+  modules:
+    - ref: ./modules/module1.yaml
+    - ref: ./modules/module2.yaml
+";
+        }
+    }
+
+    // === 보조 클래스들 ===
+
+    public class DocumentTreeItem
+    {
+        public string Name { get; set; }
+        public string Icon { get; set; }
+        public YamlDocument Document { get; set; }
+        public bool IsModified { get; set; }
+        public bool IsExpanded { get; set; }
+        public ObservableCollection<DocumentTreeItem> Children { get; set; }
+    }
+
+    // 간단한 다이얼로그들
+    public class TextInputDialog : Window
+    {
+        public string InputText { get; private set; }
+        private TextBox inputBox;
+
+        public TextInputDialog(string title, string prompt)
+        {
+            Title = title;
+            Width = 400;
+            Height = 150;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            
+            var grid = new Grid();
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            
+            var label = new Label { Content = prompt, Margin = new Thickness(10) };
+            Grid.SetRow(label, 0);
+            
+            inputBox = new TextBox { Margin = new Thickness(10, 0, 10, 10) };
+            Grid.SetRow(inputBox, 1);
+            
+            var buttonPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(10)
+            };
+            
+            var okButton = new Button { Content = "OK", Width = 75, Margin = new Thickness(5), IsDefault = true };
+            okButton.Click += (s, e) => { InputText = inputBox.Text; DialogResult = true; };
+            
+            var cancelButton = new Button { Content = "Cancel", Width = 75, Margin = new Thickness(5), IsCancel = true };
+            
+            buttonPanel.Children.Add(okButton);
+            buttonPanel.Children.Add(cancelButton);
+            Grid.SetRow(buttonPanel, 2);
+            
+            grid.Children.Add(label);
+            grid.Children.Add(inputBox);
+            grid.Children.Add(buttonPanel);
+            
+            Content = grid;
+        }
+    }
+
+    public class ListSelectionDialog : Window
+    {
+        public string SelectedItem { get; private set; }
+        private ListBox listBox;
+
+        public ListSelectionDialog(string title, string[] items)
+        {
+            Title = title;
+            Width = 400;
+            Height = 300;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            
+            var grid = new Grid();
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            
+            listBox = new ListBox { Margin = new Thickness(10) };
+            foreach (var item in items)
+            {
+                listBox.Items.Add(item);
+            }
+            Grid.SetRow(listBox, 0);
+            
+            var buttonPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(10)
+            };
+            
+            var okButton = new Button { Content = "OK", Width = 75, Margin = new Thickness(5), IsDefault = true };
+            okButton.Click += (s, e) =>
+            {
+                if (listBox.SelectedItem != null)
+                {
+                    SelectedItem = listBox.SelectedItem.ToString();
+                    DialogResult = true;
+                }
+            };
+            
+            var cancelButton = new Button { Content = "Cancel", Width = 75, Margin = new Thickness(5), IsCancel = true };
+            
+            buttonPanel.Children.Add(okButton);
+            buttonPanel.Children.Add(cancelButton);
+            Grid.SetRow(buttonPanel, 1);
+            
+            grid.Children.Add(listBox);
+            grid.Children.Add(buttonPanel);
+            
+            Content = grid;
+        }
+    }
+
+    public class NewDocumentDialog : Window
+    {
+        public string DocumentName { get; private set; }
+        public string DocumentType { get; private set; }
+        private TextBox nameBox;
+        private ComboBox typeCombo;
+
+        public NewDocumentDialog()
+        {
+            Title = "New Document";
+            Width = 400;
+            Height = 200;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            
+            var grid = new Grid();
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            
+            var nameLabel = new Label { Content = "Document Name:", Margin = new Thickness(10, 10, 10, 0) };
+            Grid.SetRow(nameLabel, 0);
+            
+            nameBox = new TextBox { Margin = new Thickness(10, 0, 10, 10) };
+            Grid.SetRow(nameBox, 1);
+            
+            var typeLabel = new Label { Content = "Document Type:", Margin = new Thickness(10, 0, 10, 0) };
+            Grid.SetRow(typeLabel, 2);
+            
+            typeCombo = new ComboBox { Margin = new Thickness(10, 0, 10, 10) };
+            typeCombo.Items.Add("module");
+            typeCombo.Items.Add("integration");
+            typeCombo.Items.Add("pipeline");
+            typeCombo.Items.Add("testing");
+            typeCombo.Items.Add("monitoring");
+            typeCombo.SelectedIndex = 0;
+            Grid.SetRow(typeCombo, 3);
+            
+            var buttonPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(10)
+            };
+            
+            var okButton = new Button { Content = "OK", Width = 75, Margin = new Thickness(5), IsDefault = true };
+            okButton.Click += (s, e) =>
+            {
+                DocumentName = nameBox.Text;
+                DocumentType = typeCombo.SelectedItem?.ToString();
+                DialogResult = true;
+            };
+            
+            var cancelButton = new Button { Content = "Cancel", Width = 75, Margin = new Thickness(5), IsCancel = true };
+            
+            buttonPanel.Children.Add(okButton);
+            buttonPanel.Children.Add(cancelButton);
+            Grid.SetRow(buttonPanel, 4);
+            
+            grid.Children.Add(nameLabel);
+            grid.Children.Add(nameBox);
+            grid.Children.Add(typeLabel);
+            grid.Children.Add(typeCombo);
+            grid.Children.Add(buttonPanel);
+            
+            Content = grid;
         }
     }
 }

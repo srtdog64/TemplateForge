@@ -70,6 +70,7 @@
     </Compile>
     <Compile Include="Core\TemplateLoader.cs" />
     <Compile Include="Core\YamlStructureGenerator.cs" />
+    <Compile Include="Core\TemplateSpace.cs" />
     <Compile Include="MainWindow.xaml.cs">
       <DependentUpon>MainWindow.xaml</DependentUpon>
       <SubType>Code</SubType>
